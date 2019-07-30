@@ -8,6 +8,7 @@ ZOOM_NUMBER = 18  # building
 LAT_DEGREE_METERS = 111300
 
 EXCLUDE_TYPES = ('industrial', 'forest', 'water', 'highway', 'railway')
+REQUIRED_FILEDS = ('City', 'Number')
 
 
 assert API_KEY, 'google maps api key is required'
@@ -122,7 +123,7 @@ def save_addresses_by_zipcodes(zip_codes, distance, country='DE', file_path='res
         for zip_code in zip_codes:
             addresses = fetch_addresses_by_zip(zip_code, distance, country)
             for address in addresses:
-                writer.writerow({
+                data = {
                     'ZipCode': address.get('postcode', ''),
                     'City': address.get('city', '') or address.get('town', '') or address.get('city_district', ''),
                     'Street': address.get('road', ''),
@@ -131,4 +132,11 @@ def save_addresses_by_zipcodes(zip_codes, distance, country='DE', file_path='res
                     'Latitude': address['_latitude'],
                     'Longitude': address['_longitude'],
                     'Included': address['_included'],
-                })
+                }
+                skip = False
+                for required_field in REQUIRED_FILEDS:
+                    if not data.get(required_field):
+                        skip = True
+                        break
+                if not skip:
+                    writer.writerow(data)

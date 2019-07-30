@@ -63,11 +63,16 @@ def fetch_addresses_by_zip(zip_code, distance, country='DE'):
 
     get_bbox_url = 'https://maps.googleapis.com/maps/api/geocode/json' \
                   f'?components=postal_code:{zip_code}|country:{country}&key={API_KEY}'
-    bbox_data = requests.get(get_bbox_url).json()
+    bbox_resp = requests.get(get_bbox_url)
+    try:
+        bbox_data = bbox_resp.json()
+    except (json.decoder.JSONDecodeError, ValueError, TypeError):
+        print(f'Failed to parse bbox_data: {bbox_resp.text}')
+        bbox_data = {}
+
     if not bbox_data.get('results'):
-        raise ValueError(
-            f'Failed to find bbox data for zip_code={zip_code} and country={country}, bbox_data={bbox_data}'
-        )
+        print(f'Failed to find bbox data for zip_code={zip_code} and country={country}, bbox_data={bbox_data}')
+        return []
 
     # {'northeast': {'lat': 52.553013, 'lng': 13.426989}, 'southwest': {'lat': 52.53932, 'lng': 13.3988029}}
     bbox = bbox_data['results'][0]['geometry']['bounds']
@@ -84,8 +89,14 @@ def fetch_addresses_by_zip(zip_code, distance, country='DE'):
         for current_lon in lon_steps:
             nominatim_reverse_url = 'https://nominatim.openstreetmap.org/reverse' \
                                    f'?lat={current_lat}&lon={current_lon}&zoom={ZOOM_NUMBER}&format=geojson'
-            reverse_geocoding_data = requests.get(nominatim_reverse_url).json()
-            for feature in reverse_geocoding_data['features']:
+            reverse_geocoding_resp = requests.get(nominatim_reverse_url)
+            try:
+                reverse_geocoding_data = reverse_geocoding_resp.json()
+            except (json.decoder.JSONDecodeError, ValueError, TypeError):
+                print(f'Failed to parse reverse_geocoding_data: {reverse_geocoding_resp.text}')
+                reverse_geocoding_data = {}
+
+            for feature in reverse_geocoding_data.get('features', []):
                 properties = feature['properties']
                 address = properties.get('address', {})
                 address_type = properties.get('type', '')

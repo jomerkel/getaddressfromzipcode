@@ -1,9 +1,13 @@
+import csv
 import math
 import requests
+
 
 API_KEY = ''
 ZOOM_NUMBER = 18  # building
 LAT_DEGREE_METERS = 111300
+
+EXCLUDE_TYPES = ('industrial', 'forest', 'water', 'highway', 'railway')
 
 
 assert API_KEY, 'google maps api key is required'
@@ -44,12 +48,12 @@ def generate_steps(name, min_val, max_val, distance, current_lat=None):
         if current_lat is not None:
             options['lat'] = current_lat
         new_current_step = add_metters_func[name](**options)
+
         if not cmp_less_than_max(current_step, new_current_step, min_val, max_val):
-            raise RuntimeError(
-                f'Something went wrong... name={name}, new_current_step={new_current_step}, '
-                f'current_step={current_step}, min_val={min_val}, max_val={max_val}'
-            )
-        current_step = new_current_step
+            current_step += current_step - new_current_step
+        else:
+            current_step = new_current_step
+
     return steps
 
 
@@ -83,14 +87,48 @@ def fetch_addresses_by_zip(zip_code, distance, country='DE'):
             for feature in reverse_geocoding_data['features']:
                 properties = feature['properties']
                 address = properties.get('address', {})
-                address_type = properties.get('type')
-                # get addresses only of houses
-                if address_type != 'house':
-                    print(f'skip(it is not a house, type={address_type}) {address}')
-                    continue
+                address_type = properties.get('type', '')
+
+                if not address_type:
+                    print(f'Failed to find `type` in properties={properties}')
+
                 if str(address.get('postcode', '')) != str(zip_code):
                     print(f'skip(postcode does not match) {address}')
                     continue
+
+                address.update({
+                    '_type': address_type,
+                    '_latitude': str(current_lat),
+                    '_longitude': str(current_lon),
+                    '_included': int(address_type not in EXCLUDE_TYPES),
+                })
+
                 if address not in addresses:
                     addresses.append(address)
+
     return addresses
+
+
+def save_addresses_by_zipcodes(zip_codes, distance, country='DE', file_path='result.csv'):
+    fieldnames = ['ZipCode', 'City', 'Street', 'Number', 'Type', 'Latitude', 'Longitude', 'Included']
+
+    with open(file_path, mode='w') as csv_file:
+        # write unquoted headers
+        writer = csv.writer(csv_file)
+        writer.writerow(fieldnames)
+
+        # write data
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames, quoting=csv.QUOTE_NONNUMERIC, quotechar="'")  
+        for zip_code in zip_codes:
+            addresses = fetch_addresses_by_zip(zip_code, distance, country)
+            for address in addresses:
+                writer.writerow({
+                    'ZipCode': address.get('postcode', ''),
+                    'City': address.get('city', '') or address.get('town', '') or address.get('city_district', ''),
+                    'Street': address.get('road', ''),
+                    'Number': address.get('house_number', ''),
+                    'Type': address['_type'],
+                    'Latitude': address['_latitude'],
+                    'Longitude': address['_longitude'],
+                    'Included': address['_included'],
+                })

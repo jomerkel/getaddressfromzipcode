@@ -2,6 +2,8 @@ import csv
 import json
 import math
 import requests
+import xlrd
+from time import sleep
 
 
 API_KEY = ''
@@ -13,6 +15,26 @@ REQUIRED_FILEDS = ('City', 'Number')
 
 
 assert API_KEY, 'google maps api key is required'
+
+
+def requests_get_json_retry(url, max_retries=5):
+    data = {}
+    retry = 0
+    while not data and retry < max_retries:
+        retry += 1
+        try:
+            resp = requests.get(url)
+        except Exception as error:
+            resp = None
+            print(f'Failed to get response from {url}, error={error}, retry={retry}')
+        if resp:
+            try:
+                data = resp.json()
+            except (json.decoder.JSONDecodeError, ValueError, TypeError) as error:
+                print(f'Failed to parse bbox_data: {resp.text}, retry={retry}, error={error}')
+        if not data and retry < max_retries:
+            sleep(int(retry * 10))
+    return data
 
 
 def add_lat_metters(lat, metters):
@@ -63,14 +85,8 @@ def fetch_addresses_by_zip(zip_code, distance, country='DE'):
     addresses = []
 
     get_bbox_url = 'https://maps.googleapis.com/maps/api/geocode/json' \
-                  f'?components=postal_code:{zip_code}|country:{country}&key={API_KEY}'
-    bbox_resp = requests.get(get_bbox_url)
-    try:
-        bbox_data = bbox_resp.json()
-    except (json.decoder.JSONDecodeError, ValueError, TypeError):
-        print(f'Failed to parse bbox_data: {bbox_resp.text}')
-        bbox_data = {}
-
+                   f'?components=postal_code:{zip_code}|country:{country}&key={API_KEY}'
+    bbox_data = requests_get_json_retry(get_bbox_url)
     if not bbox_data.get('results'):
         print(f'Failed to find bbox data for zip_code={zip_code} and country={country}, bbox_data={bbox_data}')
         return []
@@ -89,13 +105,8 @@ def fetch_addresses_by_zip(zip_code, distance, country='DE'):
         lon_steps = generate_steps('lon', min_lon, max_lon, distance, current_lat=current_lat)
         for current_lon in lon_steps:
             nominatim_reverse_url = 'https://nominatim.openstreetmap.org/reverse' \
-                                   f'?lat={current_lat}&lon={current_lon}&zoom={ZOOM_NUMBER}&format=geojson'
-            reverse_geocoding_resp = requests.get(nominatim_reverse_url)
-            try:
-                reverse_geocoding_data = reverse_geocoding_resp.json()
-            except (json.decoder.JSONDecodeError, ValueError, TypeError):
-                print(f'Failed to parse reverse_geocoding_data: {reverse_geocoding_resp.text}')
-                reverse_geocoding_data = {}
+                                    f'?lat={current_lat}&lon={current_lon}&zoom={ZOOM_NUMBER}&format=geojson'
+            reverse_geocoding_data = requests_get_json_retry(nominatim_reverse_url)
 
             for feature in reverse_geocoding_data.get('features', []):
                 properties = feature['properties']
@@ -132,7 +143,9 @@ def save_addresses_by_zipcodes(zip_codes, distance, country='DE', file_path='res
 
         # write data
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames, quoting=csv.QUOTE_NONNUMERIC, quotechar="'")  
-        for zip_code in zip_codes:
+        zip_codes_count = len(zip_codes)
+        for zip_code_num, zip_code in enumerate(zip_codes):
+            print(f'PROCESS #{zip_code_num} of #{zip_codes_count} zip_code')
             addresses = fetch_addresses_by_zip(zip_code, distance, country)
             for address in addresses:
                 data = {
@@ -152,3 +165,15 @@ def save_addresses_by_zipcodes(zip_codes, distance, country='DE', file_path='res
                         break
                 if not skip:
                     writer.writerow(data)
+
+
+def get_zipcodes_from_sheet(file_path, start_index=1, end_index=117, sheet_number=1):
+    wb = xlrd.open_workbook(file_path)
+    sheet = wb.sheet_by_index(sheet_number)
+    return [sheet.cell_value(i, 2).split()[0] for i in range(start_index, end_index + 1)]
+
+
+if __name__ == '__main__':
+    all_zip_codes = get_zipcodes_from_sheet('inexio_Partner(2).xlsx')
+    print(f'all_zip_codes={all_zip_codes}')
+    save_addresses_by_zipcodes(all_zip_codes, 500)
